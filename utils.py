@@ -259,3 +259,120 @@ def draw_map(folium_df,vehicle_routes):
     m.add_child(folium.plugins.MeasureControl())
 
     return m
+
+
+def build_vehicle_route(manager, routing, plan, data, veh_number, nasrcity_test):
+    """
+    Build a route for a vehicle by starting at the strat node and
+    continuing to the end node.
+    Args: routing (ortools.constraint_solver.pywrapcp.RoutingModel): routing.
+    plan (ortools.constraint_solver.pywrapcp.Assignment): the assignment.
+    customers (Customers): the customers instance.  veh_number (int): index of
+    the vehicle
+    Returns:
+        (List) route: indexes of the customers for vehicle veh_number
+    """
+    veh_used = routing.IsVehicleUsed(plan, veh_number)
+    print('Vehicle {0} is used {1}'.format(veh_number, veh_used))
+    if veh_used:
+        route = []
+        subregions = []
+        secondrun = False
+        node = routing.Start(veh_number)  # Get the starting node index
+        # route.append(data['clients'][manager.IndexToNode(node)])
+        while not routing.IsEnd(node):
+            route.append(data['clients'][manager.IndexToNode(node)])
+            subregions.append(data['subregions'][manager.IndexToNode(node)])
+            node = plan.Value(routing.NextVar(node))
+            if manager.IndexToNode(node) in range(1,(VAN_COUNT+TRICYCLE_COUNT+1)):
+                secondrun = True
+                nasrcity_test.loc[nasrcity_test['client_id'].isin(route),'bin_id_final'] = veh_number
+                subregions_firstrun = subregions.copy()
+                route_firstrun = route.copy()
+                # route2 = []
+                # subregions2 = []
+
+        route.append(data['clients'][manager.IndexToNode(node)])
+        subregions.append(data['subregions'][manager.IndexToNode(node)])
+        if secondrun:
+            
+            route_secondrun = list(set(route) - set(route_firstrun))
+            print(set(route))
+            print(set(route_firstrun))
+            print(route_secondrun)
+            nasrcity_test.loc[nasrcity_test['client_id'].isin(route_secondrun),'bin_id_final'] = veh_number + data['num_vehicles'] # account for second run
+            # return route_firstrun,route,subregions_firstrun,subregions,nasrcity_test
+        else:
+            nasrcity_test.loc[nasrcity_test['client_id'].isin(route),'bin_id_final'] = veh_number
+        return route,subregions,nasrcity_test
+    else:
+        return None
+
+
+def print_solution(data, manager, routing, solution):
+    """Prints solution on console."""
+    print(f'Objective: {solution.ObjectiveValue()}')
+    total_distance = 0
+    total_load = 0
+    total_value = 0
+    total_orders = 0
+    total_second_legs = 0
+    route_distance_list = []
+    capacity_dimension = routing.GetDimensionOrDie('Capacity')
+    value_dimension = routing.GetDimensionOrDie('Value')
+    counter_dimension = routing.GetDimensionOrDie('Counter')
+    for vehicle_id in range(data['num_vehicles']):
+        index = routing.Start(vehicle_id)
+        plan_output = 'Route for vehicle {}:\n'.format(vehicle_id)
+        route_distance = 0
+        # route_load = 0
+        route_value = 0
+        orders_count = 0
+        second_leg_count = 0
+        second_legs = []
+        subregions = []
+        while not routing.IsEnd(index):
+            node_index = manager.IndexToNode(index)
+            load_var = capacity_dimension.CumulVar(index)
+            order_var = counter_dimension.CumulVar(index)
+            # value_var = value_dimension.CumulVar(index)
+            # route_load += data['demands'][node_index]
+            plan_output += ' {0} Load({1}) -> '.format(node_index, solution.Value(load_var))
+            route_value += data['values'][node_index]
+            # plan_output += ' {0} Value({1}) -> '.format(node_index, route_value)
+            # orders_count += data['orders'][node_index]
+            # print(node_index)
+            # print(len(data['second_leg']))
+            second_leg_count += data['second_leg'][node_index]
+            second_legs.append(data['clients'][node_index])
+            subregions.append(data['subregions'][node_index])
+            previous_index = index
+            index = solution.Value(routing.NextVar(index))
+            route_distance += routing.GetArcCostForVehicle(
+                previous_index, index, vehicle_id)
+        load_var = capacity_dimension.CumulVar(index)
+        order_var = counter_dimension.CumulVar(index)
+        plan_output += ' {0} Load({1})\n'.format(manager.IndexToNode(index),
+                                                 solution.Value(load_var))
+        plan_output += ' {0} Value({1})\n'.format(manager.IndexToNode(index),
+                                                 route_value)
+        plan_output += 'Distance of the route: {}m\n'.format(route_distance)
+        plan_output += 'Load of the route: {}\n'.format(solution.Value(load_var))
+        plan_output += 'Value of the route: {}\n'.format(route_value)
+        plan_output += 'Number of orders of the route: {}\n'.format(solution.Value(order_var))
+        plan_output += 'Number of second leg orders of the route: {}\n'.format(second_leg_count)
+        print(plan_output)
+        # print(second_legs)
+        # print(set(subregions))
+        total_distance += route_distance
+        total_load += solution.Value(load_var)
+        total_value += route_value
+        total_orders += solution.Value(order_var)
+        total_second_legs += second_leg_count
+        route_distance_list.append(route_distance)
+    print('Total distance of all routes: {}m'.format(total_distance))
+    print('Total load of all routes: {}'.format(total_load))
+    print('Total Value of all routes: {}'.format(total_value))
+    print('Total Orders of all routes: {}'.format(total_orders))
+    print('Total Second Leg Orders of all routes: {}'.format(total_second_legs))
+    return route_distance_list
