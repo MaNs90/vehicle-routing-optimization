@@ -187,3 +187,75 @@ def get_subregion_coordinates():
         sub_region_coordinates = pd.read_sql(SQL,conn)
 
     return sub_region_coordinates
+
+
+def draw_map(folium_df,vehicle_routes):
+    colors = [
+        'red',
+        'blue',
+        'gray',
+        'darkred',
+        'lightred',
+        'orange',
+        # 'beige',
+        'green',
+        'darkgreen',
+        'lightgreen',
+        'darkblue',
+        'lightblue',
+        'purple',
+        'darkpurple',
+        'pink',
+        'cadetblue',
+        'lightgray',
+        'black'
+    ]
+
+    m = folium.Map(location=[30.02599061, 31.18720606], zoom_start=10, tiles='cartodbpositron')
+    count = 0
+    mc = MarkerCluster()
+    folium.Marker(WAREHOUSE_COORDINATES, icon=folium.Icon(color='green')).add_to(m)
+    for i, bin_id in enumerate(vehicle_routes.keys()):
+        i += 1
+        if vehicle_routes[bin_id] == None:
+            continue
+        color = colors[count % len(colors)]
+        client_ids_order = vehicle_routes[bin_id]
+        # print(client_ids_order)
+        custom_dict = dict(zip(vehicle_routes[bin_id],range(len(vehicle_routes[bin_id]))))
+        route = folium_df[folium_df['client_id'].isin(client_ids_order)]
+        route = route.drop_duplicates('client_id',keep='last')
+        route = route.sort_values('client_id',key=lambda x: x.map(custom_dict))
+        bin_group = folium.FeatureGroup(name=i).add_to(m)
+        if route['order_latitude'].isna().sum()>0:
+            continue
+        route_points = route[['order_latitude', 'order_longitude']].values.tolist()
+        route_points = [WAREHOUSE_COORDINATES] + route_points
+        return_points = [i for i, v in enumerate(vehicle_routes[bin_id]) if v == 'warehouse' and i not in [0,len(vehicle_routes[bin_id])-1]]
+        for r in return_points:
+            route_points.insert(r,WAREHOUSE_COORDINATES)
+        dispatch_loc = route[['order_latitude', 'order_longitude']].iloc[0].values.tolist()
+        # loc_at_accept = route[route.arriving == 0].iloc[0][['latitude', 'longitude']].values
+        loc_at_end = route.iloc[-1][['order_latitude', 'order_longitude']].values.tolist()
+        # for p in route_points:
+        #     folium.Marker(p, icon=folium.Icon(color=color)).add_to(m)
+        bin_group.add_child(folium.PolyLine(route_points, 
+                    weight=2, 
+                    color=color,
+                   popup=i))
+        count2 = 0
+        for loc in route[['order_latitude', 'order_longitude']].values.tolist():
+            bin_group.add_child(folium.CircleMarker(loc, color =color, fill=True, radius=5, popup='{}\n{}'.format(route['sub_region_name'].values[count2],i)))
+            count2+=1
+        # folium.CircleMarker(dispatch_loc, color='red', fill=True, radius=3, popup='Dispatch Location').add_to(m)
+        # # folium.CircleMarker(loc_at_accept, color='green', fill=True, radius=3, popup='Start Trip').add_to(m)
+        # folium.CircleMarker(loc_at_end, color='darkblue', fill=True, radius=3, popup='End Trip').add_to(m)
+        # folium.CircleMarker(trips_all[trips_all['trip_id'] == trip_id][['request_latitude','request_longitude']].values, color='black', fill=True, radius=5, popup='Request Trip {}'.format(trip_id)).add_to(m)
+        count += 1
+    folium.LayerControl().add_to(m)
+    sw = [30.036962, 31.197045]
+    ne = [30.191207, 31.294183]
+    m.fit_bounds([sw, ne])  
+    m.add_child(folium.plugins.MeasureControl())
+
+    return m
